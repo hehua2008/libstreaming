@@ -6,9 +6,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,168 +18,169 @@
 
 package net.majorkernelpanic.streaming.rtp;
 
-import java.io.IOException;
-import net.majorkernelpanic.streaming.audio.AACStream;
 import android.os.SystemClock;
 import android.util.Log;
 
+import net.majorkernelpanic.streaming.audio.AACStream;
+
+import java.io.IOException;
+
 /**
- *   
- *   RFC 3640.  
+ * RFC 3640.
  *
- *   This packetizer must be fed with an InputStream containing ADTS AAC. 
- *   AAC will basically be rewrapped in an RTP stream and sent over the network.
- *   This packetizer only implements the aac-hbr mode (High Bit-rate AAC) and
- *   each packet only carry a single and complete AAC access unit.
- * 
+ * This packetizer must be fed with an InputStream containing ADTS AAC.
+ * AAC will basically be rewrapped in an RTP stream and sent over the network.
+ * This packetizer only implements the aac-hbr mode (High Bit-rate AAC) and
+ * each packet only carry a single and complete AAC access unit.
  */
 public class AACADTSPacketizer extends AbstractPacketizer implements Runnable {
+    private static final String TAG = AACADTSPacketizer.class.getSimpleName();
 
-	private final static String TAG = "AACADTSPacketizer";
+    private Thread t;
+    private int samplingRate = 8000;
 
-	private Thread t;
-	private int samplingRate = 8000;
+    public AACADTSPacketizer() {
+        super();
+    }
 
-	public AACADTSPacketizer() {
-		super();
-	}
+    public void start() {
+        if (t == null) {
+            t = new Thread(this);
+            t.start();
+        }
+    }
 
-	public void start() {
-		if (t==null) {
-			t = new Thread(this);
-			t.start();
-		}
-	}
+    public void stop() {
+        if (t != null) {
+            try {
+                is.close();
+            } catch (IOException ignore) {
+            }
+            t.interrupt();
+            try {
+                t.join();
+            } catch (InterruptedException ignored) {
+            }
+            t = null;
+        }
+    }
 
-	public void stop() {
-		if (t != null) {
-			try {
-				is.close();
-			} catch (IOException ignore) {}
-			t.interrupt();
-			try {
-				t.join();
-			} catch (InterruptedException e) {}
-			t = null;
-		}
-	}
+    public void setSamplingRate(int samplingRate) {
+        this.samplingRate = samplingRate;
+        socket.setClockFrequency(samplingRate);
+    }
 
-	public void setSamplingRate(int samplingRate) {
-		this.samplingRate = samplingRate;
-		socket.setClockFrequency(samplingRate);
-	}
+    public void run() {
+        Log.d(TAG, "AAC ADTS packetizer started !");
 
-	public void run() {
+        // "A packet SHALL carry either one or more complete Access Units, or a
+        // single fragment of an Access Unit.  Fragments of the same Access Unit
+        // have the same time stamp but different RTP sequence numbers.  The
+        // marker bit in the RTP header is 1 on the last fragment of an Access
+        // Unit, and 0 on all other fragments." RFC 3640
 
-		Log.d(TAG,"AAC ADTS packetizer started !");
+        // ADTS header fields that we need to parse
+        boolean protection;
+        int frameLength, sum, length, nbau, nbpk, samplingRateIndex, profile;
+        long oldtime = SystemClock.elapsedRealtime(), now = oldtime;
+        byte[] header = new byte[8];
 
-		// "A packet SHALL carry either one or more complete Access Units, or a
-		// single fragment of an Access Unit.  Fragments of the same Access Unit
-		// have the same time stamp but different RTP sequence numbers.  The
-		// marker bit in the RTP header is 1 on the last fragment of an Access
-		// Unit, and 0 on all other fragments." RFC 3640
+        try {
+            while (!Thread.interrupted()) {
+                // Synchronisation: ADTS packet starts with 12bits set to 1
+                while (true) {
+                    if ((is.read() & 0xFF) == 0xFF) {
+                        header[1] = (byte) is.read();
+                        if ((header[1] & 0xF0) == 0xF0) {
+                            break;
+                        }
+                    }
+                }
 
-		// ADTS header fields that we need to parse
-		boolean protection;
-		int frameLength, sum, length, nbau, nbpk, samplingRateIndex, profile;
-		long oldtime = SystemClock.elapsedRealtime(), now = oldtime;
-		byte[] header = new byte[8]; 
+                // Parse adts header (ADTS packets start with a 7 or 9 byte long header)
+                fill(header, 2, 5);
 
-		try {
-			while (!Thread.interrupted()) {
+                // The protection bit indicates whether or not the header contains the two extra
+                // bytes
+                protection = (header[1] & 0x01) > 0 ? true : false;
+                frameLength = (header[3] & 0x03) << 11
+                        | (header[4] & 0xFF) << 3
+                        | (header[5] & 0xFF) >> 5;
+                frameLength -= (protection ? 7 : 9);
 
-				// Synchronisation: ADTS packet starts with 12bits set to 1
-				while (true) {
-					if ( (is.read()&0xFF) == 0xFF ) {
-						header[1] = (byte) is.read();
-						if ( (header[1]&0xF0) == 0xF0) break;
-					}
-				}
+                // Number of AAC frames in the ADTS frame
+                nbau = (header[6] & 0x03) + 1;
 
-				// Parse adts header (ADTS packets start with a 7 or 9 byte long header)
-				fill(header, 2, 5);
+                // The number of RTP packets that will be sent for this ADTS frame
+                nbpk = frameLength / MAXPACKETSIZE + 1;
 
-				// The protection bit indicates whether or not the header contains the two extra bytes
-				protection = (header[1]&0x01)>0 ? true : false;
-				frameLength = (header[3]&0x03) << 11 | 
-						(header[4]&0xFF) << 3 | 
-						(header[5]&0xFF) >> 5 ;
-				frameLength -= (protection ? 7 : 9);
+                // Read CRS if any
+                if (!protection) {
+                    is.read(header, 0, 2);
+                }
 
-				// Number of AAC frames in the ADTS frame
-				nbau = (header[6]&0x03) + 1;
+                samplingRate = AACStream.AUDIO_SAMPLING_RATES[(header[2] & 0x3C) >> 2];
+                profile = ((header[2] & 0xC0) >> 6) + 1;
 
-				// The number of RTP packets that will be sent for this ADTS frame
-				nbpk = frameLength/MAXPACKETSIZE + 1;
+                // We update the RTP timestamp
+                ts += 1024L * 1000000000L / samplingRate; //stats.average();
 
-				// Read CRS if any
-				if (!protection) is.read(header,0,2);
+                //Log.d(TAG,"frameLength: "+frameLength+" protection: "+protection+" p:
+                // "+profile+" sr: "+samplingRate);
 
-				samplingRate = AACStream.AUDIO_SAMPLING_RATES[(header[2]&0x3C) >> 2];
-				profile = ( (header[2]&0xC0) >> 6 ) + 1 ;
+                sum = 0;
+                while (sum < frameLength) {
+                    buffer = socket.requestBuffer();
+                    socket.updateTimestamp(ts);
 
-				// We update the RTP timestamp
-				ts +=  1024L*1000000000L/samplingRate; //stats.average();
+                    // Read frame
+                    if (frameLength - sum > MAXPACKETSIZE - RTPHL - 4) {
+                        length = MAXPACKETSIZE - RTPHL - 4;
+                    } else {
+                        length = frameLength - sum;
+                        socket.markNextPacket();
+                    }
+                    sum += length;
+                    fill(buffer, RTPHL + 4, length);
 
-				//Log.d(TAG,"frameLength: "+frameLength+" protection: "+protection+" p: "+profile+" sr: "+samplingRate);
+                    // AU-headers-length field: contains the size in bits of a AU-header
+                    // 13+3 = 16 bits -> 13bits for AU-size and 3bits for AU-Index / AU-Index-delta
+                    // 13 bits will be enough because ADTS uses 13 bits for frame length
+                    buffer[RTPHL] = 0;
+                    buffer[RTPHL + 1] = 0x10;
 
-				sum = 0;
-				while (sum<frameLength) {
+                    // AU-size
+                    buffer[RTPHL + 2] = (byte) (frameLength >> 5);
+                    buffer[RTPHL + 3] = (byte) (frameLength << 3);
 
-					buffer = socket.requestBuffer();
-					socket.updateTimestamp(ts);
+                    // AU-Index
+                    buffer[RTPHL + 3] &= 0xF8;
+                    buffer[RTPHL + 3] |= 0x00;
 
-					// Read frame
-					if (frameLength-sum > MAXPACKETSIZE-rtphl-4) {
-						length = MAXPACKETSIZE-rtphl-4;
-					}
-					else {
-						length = frameLength-sum;
-						socket.markNextPacket();
-					}
-					sum += length;
-					fill(buffer, rtphl+4, length);
+                    send(RTPHL + 4 + length);
+                }
+            }
+        } catch (IOException e) {
+            // Ignore
+        } catch (ArrayIndexOutOfBoundsException e) {
+            Log.e(TAG, "ArrayIndexOutOfBoundsException", e);
+            e.printStackTrace();
+        } catch (InterruptedException ignore) {
+        }
 
-					// AU-headers-length field: contains the size in bits of a AU-header
-					// 13+3 = 16 bits -> 13bits for AU-size and 3bits for AU-Index / AU-Index-delta 
-					// 13 bits will be enough because ADTS uses 13 bits for frame length
-					buffer[rtphl] = 0;
-					buffer[rtphl+1] = 0x10; 
+        Log.d(TAG, "AAC ADTS packetizer stopped !");
+    }
 
-					// AU-size
-					buffer[rtphl+2] = (byte) (frameLength>>5);
-					buffer[rtphl+3] = (byte) (frameLength<<3);
-
-					// AU-Index
-					buffer[rtphl+3] &= 0xF8;
-					buffer[rtphl+3] |= 0x00;
-
-					send(rtphl+4+length);
-
-				}
-
-			}
-		} catch (IOException e) {
-			// Ignore
-		} catch (ArrayIndexOutOfBoundsException e) {
-			Log.e(TAG,"ArrayIndexOutOfBoundsException: "+(e.getMessage()!=null?e.getMessage():"unknown error"));
-			e.printStackTrace();
-		} catch (InterruptedException ignore) {}
-
-		Log.d(TAG,"AAC ADTS packetizer stopped !");
-
-	}
-
-	private int fill(byte[] buffer, int offset,int length) throws IOException {
-		int sum = 0, len;
-		while (sum<length) {
-			len = is.read(buffer, offset+sum, length-sum);
-			if (len<0) {
-				throw new IOException("End of stream");
-			}
-			else sum+=len;
-		}
-		return sum;
-	}
-
+    private int fill(byte[] buffer, int offset, int length) throws IOException {
+        int sum = 0, len;
+        while (sum < length) {
+            len = is.read(buffer, offset + sum, length - sum);
+            if (len < 0) {
+                throw new IOException("End of stream");
+            } else {
+                sum += len;
+            }
+        }
+        return sum;
+    }
 }

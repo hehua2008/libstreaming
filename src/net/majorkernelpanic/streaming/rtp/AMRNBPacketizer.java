@@ -6,9 +6,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,118 +18,111 @@
 
 package net.majorkernelpanic.streaming.rtp;
 
-import java.io.IOException;
 import android.util.Log;
 
+import java.io.IOException;
+
 /**
- * 
- *   RFC 3267.
- *   
- *   AMR Streaming over RTP.
- *   
- *   Must be fed with an InputStream containing raw AMR NB
- *   Stream must begin with a 6 bytes long header: "#!AMR\n", it will be skipped
- *   
+ * RFC 3267.
+ *
+ * AMR Streaming over RTP.
+ *
+ * Must be fed with an InputStream containing raw AMR NB
+ * Stream must begin with a 6 bytes long header: "#!AMR\n", it will be skipped
  */
 public class AMRNBPacketizer extends AbstractPacketizer implements Runnable {
+    public static final String TAG = AMRNBPacketizer.class.getSimpleName();
 
-	public final static String TAG = "AMRNBPacketizer";
+    private static final int AMR_HEADER_LENGTH = 6; // "#!AMR\n"
+    private static final int AMR_FRAME_HEADER_LENGTH = 1; // Each frame has a short header
+    private static final int[] FRAME_BITS = {95, 103, 118, 134, 148, 159, 204, 244};
+    private static final int SAMPLING_RATE = 8000;
 
-	private final int AMR_HEADER_LENGTH = 6; // "#!AMR\n"
-	private static final int AMR_FRAME_HEADER_LENGTH = 1; // Each frame has a short header
-	private static final int[] sFrameBits = {95, 103, 118, 134, 148, 159, 204, 244};
-	private int samplingRate = 8000;
+    private Thread t;
 
-	private Thread t;
+    public AMRNBPacketizer() {
+        super();
+        socket.setClockFrequency(SAMPLING_RATE);
+    }
 
-	public AMRNBPacketizer() {
-		super();
-		socket.setClockFrequency(samplingRate);
-	}
+    public void start() {
+        if (t == null) {
+            t = new Thread(this);
+            t.start();
+        }
+    }
 
-	public void start() {
-		if (t==null) {
-			t = new Thread(this);
-			t.start();
-		}
-	}
+    public void stop() {
+        if (t != null) {
+            try {
+                is.close();
+            } catch (IOException ignore) {
+            }
+            t.interrupt();
+            try {
+                t.join();
+            } catch (InterruptedException ignored) {
+            }
+            t = null;
+        }
+    }
 
-	public void stop() {
-		if (t != null) {
-			try {
-				is.close();
-			} catch (IOException ignore) {}
-			t.interrupt();
-			try {
-				t.join();
-			} catch (InterruptedException e) {}
-			t = null;
-		}
-	}
+    public void run() {
+        int frameLength, frameType;
+        long now = System.nanoTime(), oldtime = now;
+        byte[] header = new byte[AMR_HEADER_LENGTH];
 
-	public void run() {
+        try {
+            // Skip raw AMR header
+            fill(header, 0, AMR_HEADER_LENGTH);
 
-		int frameLength, frameType;
-		long now = System.nanoTime(), oldtime = now;
-		byte[] header = new byte[AMR_HEADER_LENGTH];
+            if (header[5] != '\n') {
+                Log.e(TAG, "Bad header ! AMR not correcty supported by the phone !");
+                return;
+            }
 
-		try {
+            while (!Thread.interrupted()) {
+                buffer = socket.requestBuffer();
+                buffer[RTPHL] = (byte) 0xF0;
 
-			// Skip raw AMR header
-			fill(header,0,AMR_HEADER_LENGTH);
-			
-			if (header[5] != '\n') {
-				Log.e(TAG,"Bad header ! AMR not correcty supported by the phone !");
-				return;
-			}
+                // First we read the frame header
+                fill(buffer, RTPHL + 1, AMR_FRAME_HEADER_LENGTH);
 
-			while (!Thread.interrupted()) {
+                // Then we calculate the frame payload length
+                frameType = (Math.abs(buffer[RTPHL + 1]) >> 3) & 0x0f;
+                frameLength = (FRAME_BITS[frameType] + 7) / 8;
 
-				buffer = socket.requestBuffer();
-				buffer[rtphl] = (byte) 0xF0;
-				
-				// First we read the frame header
-				fill(buffer, rtphl+1,AMR_FRAME_HEADER_LENGTH);
+                // And we read the payload
+                fill(buffer, RTPHL + 2, frameLength);
 
-				// Then we calculate the frame payload length
-				frameType = (Math.abs(buffer[rtphl + 1]) >> 3) & 0x0f;
-				frameLength = (sFrameBits[frameType]+7)/8;
+                //Log.d(TAG,"Frame length: "+frameLength+" frameType: "+frameType);
 
-				// And we read the payload
-				fill(buffer, rtphl+2,frameLength);
+                // RFC 3267 Page 14: "For AMR, the sampling frequency is 8 kHz"
+                // FIXME: Is this really always the case ??
+                ts += 160L * 1000000000L / SAMPLING_RATE; //stats.average();
+                socket.updateTimestamp(ts);
+                socket.markNextPacket();
 
-				//Log.d(TAG,"Frame length: "+frameLength+" frameType: "+frameType);
+                //Log.d(TAG,"expected: "+ expected + " measured: "+measured);
 
-				// RFC 3267 Page 14: "For AMR, the sampling frequency is 8 kHz"
-				// FIXME: Is this really always the case ??
-				ts += 160L*1000000000L/samplingRate; //stats.average();
-				socket.updateTimestamp(ts);
-				socket.markNextPacket();
+                send(RTPHL + 1 + AMR_FRAME_HEADER_LENGTH + frameLength);
+            }
+        } catch (IOException | InterruptedException ignored) {
+        }
 
-				//Log.d(TAG,"expected: "+ expected + " measured: "+measured);
-				
-				send(rtphl+1+AMR_FRAME_HEADER_LENGTH+frameLength);
-				
-			}
+        Log.d(TAG, "AMR packetizer stopped !");
+    }
 
-		} catch (IOException e) { 
-		} catch (InterruptedException e) {}
-
-		Log.d(TAG,"AMR packetizer stopped !");
-
-	}
-
-	private int fill(byte[] buffer, int offset,int length) throws IOException {
-		int sum = 0, len;
-		while (sum<length) {
-			len = is.read(buffer, offset+sum, length-sum);
-			if (len<0) {
-				throw new IOException("End of stream");
-			}
-			else sum+=len;
-		}
-		return sum;
-	}
-
-
+    private int fill(byte[] buffer, int offset, int length) throws IOException {
+        int sum = 0, len;
+        while (sum < length) {
+            len = is.read(buffer, offset + sum, length - sum);
+            if (len < 0) {
+                throw new IOException("End of stream");
+            } else {
+                sum += len;
+            }
+        }
+        return sum;
+    }
 }
