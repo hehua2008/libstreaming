@@ -39,7 +39,6 @@ public class MediaCodecInputStream extends InputStream {
 
     private final MediaCodec mMediaCodec;
     private final BufferInfo mBufferInfo = new BufferInfo();
-    private ByteBuffer[] mBuffers = null;
     private ByteBuffer mBuffer = null;
     private int mIndex = -1;
     private boolean mClosed = false;
@@ -48,7 +47,6 @@ public class MediaCodecInputStream extends InputStream {
 
     public MediaCodecInputStream(MediaCodec mediaCodec) {
         mMediaCodec = mediaCodec;
-        mBuffers = mMediaCodec.getOutputBuffers();
     }
 
     @Override
@@ -73,11 +71,9 @@ public class MediaCodecInputStream extends InputStream {
                     if (mIndex >= 0) {
                         //Log.d(TAG,"Index: "+mIndex+" Time: "+mBufferInfo.presentationTimeUs+"
                         // size: "+mBufferInfo.size);
-                        mBuffer = mBuffers[mIndex];
+                        mBuffer = mMediaCodec.getOutputBuffer(mIndex);
                         mBuffer.rewind();
                         break;
-                    } else if (mIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-                        mBuffers = mMediaCodec.getOutputBuffers();
                     } else if (mIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                         mMediaFormat = mMediaCodec.getOutputFormat();
                         Log.i(TAG, mMediaFormat.toString());

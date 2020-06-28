@@ -220,7 +220,6 @@ public class AACStream extends AudioStream {
         mMediaCodec.start();
 
         final MediaCodecInputStream inputStream = new MediaCodecInputStream(mMediaCodec);
-        final ByteBuffer[] inputBuffers = mMediaCodec.getInputBuffers();
 
         mThread = new Thread(() -> {
             int len = 0, bufferIndex = 0;
@@ -228,14 +227,15 @@ public class AACStream extends AudioStream {
                 while (!Thread.interrupted()) {
                     bufferIndex = mMediaCodec.dequeueInputBuffer(10000);
                     if (bufferIndex >= 0) {
-                        inputBuffers[bufferIndex].clear();
-                        len = mAudioRecord.read(inputBuffers[bufferIndex], bufferSize);
+                        ByteBuffer inputBuffer = mMediaCodec.getInputBuffer(bufferIndex);
+                        inputBuffer.clear();
+                        len = mAudioRecord.read(inputBuffer, bufferSize);
                         if (len == AudioRecord.ERROR_INVALID_OPERATION
                                 || len == AudioRecord.ERROR_BAD_VALUE) {
                             Log.e(TAG, "An error occured with the AudioRecord API !");
                         } else {
                             //Log.v(TAG,"Pushing raw audio to the decoder: len="+len+" bs:
-                            // "+inputBuffers[bufferIndex].capacity());
+                            // "+inputBuffer.capacity());
                             mMediaCodec.queueInputBuffer(bufferIndex, 0, len,
                                     System.nanoTime() / 1000, 0);
                         }

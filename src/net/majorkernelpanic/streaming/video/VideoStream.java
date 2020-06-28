@@ -478,7 +478,6 @@ public abstract class VideoStream extends MediaStream {
 
         Camera.PreviewCallback callback = new Camera.PreviewCallback() {
             long now = System.nanoTime() / 1000, oldnow = now, i = 0;
-            final ByteBuffer[] inputBuffers = mMediaCodec.getInputBuffers();
 
             @Override
             public void onPreviewFrame(byte[] data, Camera camera) {
@@ -491,14 +490,15 @@ public abstract class VideoStream extends MediaStream {
                 try {
                     int bufferIndex = mMediaCodec.dequeueInputBuffer(500000);
                     if (bufferIndex >= 0) {
-                        inputBuffers[bufferIndex].clear();
+                        ByteBuffer inputBuffer = mMediaCodec.getInputBuffer(bufferIndex);
+                        inputBuffer.clear();
                         if (data == null) {
                             Log.e(TAG, "Symptom of the \"Callback buffer was to small\" problem.");
                         } else {
-                            convertor.convert(data, inputBuffers[bufferIndex]);
+                            convertor.convert(data, inputBuffer);
                         }
                         mMediaCodec.queueInputBuffer(bufferIndex, 0,
-                                inputBuffers[bufferIndex].position(), now, 0);
+                                inputBuffer.position(), now, 0);
                     } else {
                         Log.e(TAG, "No buffer available !");
                     }

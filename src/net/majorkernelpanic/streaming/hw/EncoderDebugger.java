@@ -616,14 +616,13 @@ public class EncoderDebugger {
         mDecoder.configure(mediaFormat, null, null, 0);
         mDecoder.start();
 
-        ByteBuffer[] decInputBuffers = mDecoder.getInputBuffers();
-
         int decInputIndex = mDecoder.dequeueInputBuffer(1000000 / FRAMERATE);
         if (decInputIndex >= 0) {
-            decInputBuffers[decInputIndex].clear();
-            decInputBuffers[decInputIndex].put(prefix);
-            decInputBuffers[decInputIndex].put(mSPS);
-            mDecoder.queueInputBuffer(decInputIndex, 0, decInputBuffers[decInputIndex].position(),
+            ByteBuffer inputBuffer = mDecoder.getInputBuffer(decInputIndex);
+            inputBuffer.clear();
+            inputBuffer.put(prefix);
+            inputBuffer.put(mSPS);
+            mDecoder.queueInputBuffer(decInputIndex, 0, inputBuffer.position(),
                     timestamp(), 0);
         } else {
             if (VERBOSE) {
@@ -633,10 +632,11 @@ public class EncoderDebugger {
 
         decInputIndex = mDecoder.dequeueInputBuffer(1000000 / FRAMERATE);
         if (decInputIndex >= 0) {
-            decInputBuffers[decInputIndex].clear();
-            decInputBuffers[decInputIndex].put(prefix);
-            decInputBuffers[decInputIndex].put(mPPS);
-            mDecoder.queueInputBuffer(decInputIndex, 0, decInputBuffers[decInputIndex].position(),
+            ByteBuffer inputBuffer = mDecoder.getInputBuffer(decInputIndex);
+            inputBuffer.clear();
+            inputBuffer.put(prefix);
+            inputBuffer.put(mPPS);
+            mDecoder.queueInputBuffer(decInputIndex, 0, inputBuffer.position(),
                     timestamp(), 0);
         } else {
             if (VERBOSE) {
@@ -662,8 +662,6 @@ public class EncoderDebugger {
      * Tries to obtain the SPS and the PPS for the encoder.
      */
     private long searchSPSandPPS() {
-        ByteBuffer[] inputBuffers = mEncoder.getInputBuffers();
-        ByteBuffer[] outputBuffers = mEncoder.getOutputBuffers();
         BufferInfo info = new BufferInfo();
         byte[] csd = new byte[128];
         int len = 0, p = 4, q = 4;
@@ -672,13 +670,14 @@ public class EncoderDebugger {
         while (elapsed < 3000000 && (mSPS == null || mPPS == null)) {
             // Some encoders won't give us the SPS and PPS unless they receive something to
             // encode first...
-            int bufferIndex = mEncoder.dequeueInputBuffer(1000000 / FRAMERATE);
-            if (bufferIndex >= 0) {
-                check(inputBuffers[bufferIndex].capacity() >= mData.length,
+            int inputIndex = mEncoder.dequeueInputBuffer(1000000 / FRAMERATE);
+            if (inputIndex >= 0) {
+                ByteBuffer inputBuffer = mEncoder.getInputBuffer(inputIndex);
+                check(inputBuffer.capacity() >= mData.length,
                         "The input buffer is not big enough.");
-                inputBuffers[bufferIndex].clear();
-                inputBuffers[bufferIndex].put(mData, 0, mData.length);
-                mEncoder.queueInputBuffer(bufferIndex, 0, mData.length, timestamp(), 0);
+                inputBuffer.clear();
+                inputBuffer.put(mData, 0, mData.length);
+                mEncoder.queueInputBuffer(inputIndex, 0, mData.length, timestamp(), 0);
             } else {
                 if (VERBOSE) {
                     Log.e(TAG, "No buffer available !");
@@ -691,9 +690,9 @@ public class EncoderDebugger {
             // But some other will not, in that case we try to find a NAL unit of type 7 or 8 in
             // the byte stream outputed by the encoder...
 
-            int index = mEncoder.dequeueOutputBuffer(info, 1000000 / FRAMERATE);
+            int outputIndex = mEncoder.dequeueOutputBuffer(info, 1000000 / FRAMERATE);
 
-            if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+            if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 // The PPS and PPS shoud be there
                 MediaFormat format = mEncoder.getOutputFormat();
                 ByteBuffer spsb = format.getByteBuffer("csd-0");
@@ -705,12 +704,11 @@ public class EncoderDebugger {
                 ppsb.position(4);
                 ppsb.get(mPPS, 0, mPPS.length);
                 break;
-            } else if (index == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-                outputBuffers = mEncoder.getOutputBuffers();
-            } else if (index >= 0) {
+            } else if (outputIndex >= 0) {
                 len = info.size;
                 if (len < 128) {
-                    outputBuffers[index].get(csd, 0, len);
+                    ByteBuffer ouputBuffer = mEncoder.getOutputBuffer(outputIndex);
+                    ouputBuffer.get(csd, 0, len);
                     if (len > 0 && csd[0] == 0 && csd[1] == 0 && csd[2] == 0 && csd[3] == 1) {
                         // Parses the SPS and PPS, they could be in two different packets and 
                         // in a different order depending on the phone so we don't make any
@@ -738,7 +736,7 @@ public class EncoderDebugger {
                         }
                     }
                 }
-                mEncoder.releaseOutputBuffer(index, false);
+                mEncoder.releaseOutputBuffer(outputIndex, false);
             }
 
             elapsed = timestamp() - now;
@@ -756,17 +754,16 @@ public class EncoderDebugger {
         long elapsed = 0, now = timestamp();
         int encOutputIndex = 0, encInputIndex = 0;
         BufferInfo info = new BufferInfo();
-        ByteBuffer[] encInputBuffers = mEncoder.getInputBuffers();
-        ByteBuffer[] encOutputBuffers = mEncoder.getOutputBuffers();
 
         while (elapsed < 5000000) {
             // Feeds the encoder with an image
             encInputIndex = mEncoder.dequeueInputBuffer(1000000 / FRAMERATE);
             if (encInputIndex >= 0) {
-                check(encInputBuffers[encInputIndex].capacity() >= mData.length,
+                ByteBuffer inputBuffer = mEncoder.getInputBuffer(encInputIndex);
+                check(inputBuffer.capacity() >= mData.length,
                         "The input buffer is not big enough.");
-                encInputBuffers[encInputIndex].clear();
-                encInputBuffers[encInputIndex].put(mData, 0, mData.length);
+                inputBuffer.clear();
+                inputBuffer.put(mData, 0, mData.length);
                 mEncoder.queueInputBuffer(encInputIndex, 0, mData.length, timestamp(), 0);
             } else {
                 if (VERBOSE) {
@@ -776,12 +773,11 @@ public class EncoderDebugger {
 
             // Tries to get a NAL unit
             encOutputIndex = mEncoder.dequeueOutputBuffer(info, 1000000 / FRAMERATE);
-            if (encOutputIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-                encOutputBuffers = mEncoder.getOutputBuffers();
-            } else if (encOutputIndex >= 0) {
+            if (encOutputIndex >= 0) {
                 mVideo[n] = new byte[info.size];
-                encOutputBuffers[encOutputIndex].clear();
-                encOutputBuffers[encOutputIndex].get(mVideo[n++], 0, info.size);
+                ByteBuffer ouputBuffer = mEncoder.getOutputBuffer(encOutputIndex);
+                ouputBuffer.clear();
+                ouputBuffer.get(mVideo[n++], 0, info.size);
                 mEncoder.releaseOutputBuffer(encOutputIndex, false);
                 if (n >= NB_ENCODED) {
                     flushMediaCodec(mEncoder);
@@ -804,8 +800,6 @@ public class EncoderDebugger {
         int n = 0, i = 0, j = 0;
         long elapsed = 0, now = timestamp();
         int decInputIndex = 0, decOutputIndex = 0;
-        ByteBuffer[] decInputBuffers = mDecoder.getInputBuffers();
-        ByteBuffer[] decOutputBuffers = mDecoder.getOutputBuffers();
         BufferInfo info = new BufferInfo();
 
         while (elapsed < 3000000) {
@@ -813,26 +807,27 @@ public class EncoderDebugger {
             if (i < NB_ENCODED) {
                 decInputIndex = mDecoder.dequeueInputBuffer(1000000 / FRAMERATE);
                 if (decInputIndex >= 0) {
-                    int l1 = decInputBuffers[decInputIndex].capacity();
+                    ByteBuffer inputBuffer = mDecoder.getInputBuffer(decInputIndex);
+                    int l1 = inputBuffer.capacity();
                     int l2 = mVideo[i].length;
-                    decInputBuffers[decInputIndex].clear();
+                    inputBuffer.clear();
 
                     if ((withPrefix && hasPrefix(mVideo[i]))
                             || (!withPrefix && !hasPrefix(mVideo[i]))) {
                         check(l1 >= l2, "The decoder input buffer is not big enough (nal=" + l2
                                 + ", capacity=" + l1 + ").");
-                        decInputBuffers[decInputIndex].put(mVideo[i], 0, mVideo[i].length);
+                        inputBuffer.put(mVideo[i], 0, mVideo[i].length);
                     } else if (withPrefix && !hasPrefix(mVideo[i])) {
                         check(l1 >= l2 + 4,
                                 "The decoder input buffer is not big enough (nal=" + (l2 + 4)
                                         + ", capacity=" + l1 + ").");
-                        decInputBuffers[decInputIndex].put(new byte[]{0, 0, 0, 1});
-                        decInputBuffers[decInputIndex].put(mVideo[i], 0, mVideo[i].length);
+                        inputBuffer.put(new byte[]{0, 0, 0, 1});
+                        inputBuffer.put(mVideo[i], 0, mVideo[i].length);
                     } else if (!withPrefix && hasPrefix(mVideo[i])) {
                         check(l1 >= l2 - 4,
                                 "The decoder input buffer is not big enough (nal=" + (l2 - 4)
                                         + ", capacity=" + l1 + ").");
-                        decInputBuffers[decInputIndex].put(mVideo[i], 4, mVideo[i].length - 4);
+                        inputBuffer.put(mVideo[i], 4, mVideo[i].length - 4);
                     }
 
                     mDecoder.queueInputBuffer(decInputIndex, 0, l2, timestamp(), 0);
@@ -846,17 +841,16 @@ public class EncoderDebugger {
 
             // Tries to get a decoded image
             decOutputIndex = mDecoder.dequeueOutputBuffer(info, 1000000 / FRAMERATE);
-            if (decOutputIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-                decOutputBuffers = mDecoder.getOutputBuffers();
-            } else if (decOutputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+            if (decOutputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 mDecOutputFormat = mDecoder.getOutputFormat();
             } else if (decOutputIndex >= 0) {
                 if (n > 2) {
                     // We have successfully encoded and decoded an image !
                     int length = info.size;
                     mDecodedVideo[j] = new byte[length];
-                    decOutputBuffers[decOutputIndex].clear();
-                    decOutputBuffers[decOutputIndex].get(mDecodedVideo[j], 0, length);
+                    ByteBuffer outputBuffer = mDecoder.getOutputBuffer(decOutputIndex);
+                    outputBuffer.clear();
+                    outputBuffer.get(mDecodedVideo[j], 0, length);
                     // Converts the decoded frame to NV21
                     convertToNV21(j);
                     if (j >= NB_DECODED - 1) {
