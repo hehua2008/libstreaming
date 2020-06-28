@@ -247,6 +247,7 @@ class StsdBox {
     }
 
     private boolean findBoxAvcc() {
+        // avcC: 61 76 63 43
         try {
             fis.seek(pos + 8);
             while (true) {

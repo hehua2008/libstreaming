@@ -34,12 +34,52 @@ import java.io.IOException;
 public class H264Packetizer extends AbstractPacketizer implements Runnable {
     public static final String TAG = H264Packetizer.class.getSimpleName();
 
+    /**
+     *  NALU header
+     *   +---------------+
+     *   |0|1|2|3|4|5|6|7|
+     *   +-+-+-+-+-+-+-+-+
+     *   |F|NRI|   Type  |
+     *   +---------------+
+     */
+
+    public static final int NAL_SLICE           = 1;
+    public static final int NAL_DPA             = 2;
+    public static final int NAL_DPB             = 3;
+    public static final int NAL_DPC             = 4;
+    public static final int NAL_IDR_SLICE       = 5;
+    public static final int NAL_SEI             = 6;
+    public static final int NAL_SPS             = 7;
+    public static final int NAL_PPS             = 8;
+    public static final int NAL_AUD             = 9;
+    public static final int NAL_END_SEQUENCE    = 10;
+    public static final int NAL_END_STREAM      = 11;
+    public static final int NAL_FILLER_DATA     = 12;
+    public static final int NAL_SPS_EXT         = 13;
+    public static final int NAL_AUXILIARY_SLICE = 19;
+    public static final int STAP_A              = 24;
+    public static final int STAP_B              = 25;
+    public static final int MTAP16              = 26;
+    public static final int MTAP24              = 27;
+    public static final int FU_A                = 28;
+    public static final int FU_B                = 29;
+
+    public static final int MASK_00011111 = 0x1F;
+    public static final int MASK_01100000 = 0x60;
+
+    public static final int NAL_SLICE_START_FLAG = 0x80; // 10000000
+    public static final int NAL_SLICE_END_FLAG = 0x40;   // 01000000
+
+    public static final int STREAM_TYPE_MEDIA_RECORDER = 0;
+    public static final int STREAM_TYPE_MEDIA_CODEC = 1;
+    public static final int STREAM_TYPE_UNKNOWN = 2;
+
     private Thread t = null;
     private int naluLength = 0;
     private long delay = 0, oldtime = 0;
     private byte[] sps = null, pps = null, stapa = null;
     private int count = 0;
-    private int streamType = 1;
+    private int streamType = STREAM_TYPE_MEDIA_CODEC;
 
     private final byte[] header = new byte[5];
     private final Statistics stats = new Statistics();
@@ -75,13 +115,37 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
         this.pps = pps;
         this.sps = sps;
 
+        //   0               1               2               3
+        //   0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |                          RTP Header                           |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |STAP-A NAL HDR |         NALU 1 Size           | NALU 1 HDR    |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |                         NALU 1 Data                           |
+        //  :                                                               :
+        //  +               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |               | NALU 2 Size                   | NALU 2 HDR    |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |                         NALU 2 Data                           |
+        //  :                                                               :
+        //  |                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |                               :...OPTIONAL RTP padding        |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        // An e.g of an RTP packet including an STAP-A containing two single-time aggregation units
+
         // A STAP-A NAL (NAL type 24) containing the sps and pps of the stream
         if (pps != null && sps != null) {
             // STAP-A NAL header + NALU 1 (SPS) size + NALU 2 (PPS) size = 5 bytes
             stapa = new byte[sps.length + pps.length + 5];
 
             // STAP-A NAL header is 24
-            stapa[0] = 24;
+            //  +---------------+
+            //  |0|1|2|3|4|5|6|7|
+            //  +-+-+-+-+-+-+-+-+
+            //  |F|NRI| Type(24)|
+            //  +---------------+
+            stapa[0] = STAP_A;
 
             // Write NALU 1 size into the array (NALU 1 is the SPS).
             stapa[1] = (byte) (sps.length >> 8);
@@ -104,10 +168,10 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
         count = 0;
 
         if (is instanceof MediaCodecInputStream) {
-            streamType = 1;
+            streamType = STREAM_TYPE_MEDIA_CODEC;
             socket.setCacheSize(0);
         } else {
-            streamType = 0;
+            streamType = STREAM_TYPE_MEDIA_RECORDER;
             socket.setCacheSize(400);
         }
 
@@ -138,8 +202,11 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
     private void send() throws IOException, InterruptedException {
         int sum = 1, len = 0, type;
 
-        if (streamType == 0) {
+        if (streamType == STREAM_TYPE_MEDIA_RECORDER) {
             // NAL units are preceeded by their length, we parse the length
+            // e.g.
+            // 00 00 00 19 06 [... 25 bytes...] 00 00 24 aa 65 [... 9386 bytes...]
+            // SEI                              IDR Slice
             fill(header, 0, 5);
             ts += delay;
             naluLength = (header[0] & 0xFF) << 24
@@ -149,16 +216,19 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
             if (naluLength > 100000 || naluLength < 0) {
                 resync();
             }
-        } else if (streamType == 1) {
+        } else if (streamType == STREAM_TYPE_MEDIA_CODEC) {
             // NAL units are preceeded with 0x00000001
+            // e.g.
+            // 00 00 00 01 06 ... 00 00 00 01 67 ... 00 00 00 01 68 ... 00 00 00 01 65 ...
+            // SEI                SPS                PPS                IDR Slice
             fill(header, 0, 5);
             ts = ((MediaCodecInputStream) is).getLastBufferInfo().presentationTimeUs * 1000L;
             //ts += delay;
             naluLength = is.available() + 1;
             if (!(header[0] == 0 && header[1] == 0 && header[2] == 0)) {
                 // Turns out, the NAL units are not preceeded with 0x00000001
-                Log.e(TAG, "NAL units are not preceeded by 0x00000001");
-                streamType = 2;
+                Log.e(TAG, "NAL units are not preceeded with 0x00000001");
+                streamType = STREAM_TYPE_UNKNOWN;
                 return;
             }
         } else {
@@ -171,11 +241,11 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
         }
 
         // Parses the NAL unit type
-        type = header[4] & 0x1F;
+        type = header[4] & MASK_00011111;
 
         // The stream already contains NAL unit type 7 or 8, we don't need
         // to add them to the stream ourselves
-        if (type == 7 || type == 8) {
+        if (type == NAL_SPS || type == NAL_PPS) {
             Log.v(TAG, "SPS or PPS present in the stream.");
             count++;
             if (count > 4) {
@@ -186,7 +256,7 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
 
         // We send two packets containing NALU type 7 (SPS) and 8 (PPS)
         // Those should allow the H264 stream to be decoded even if no SDP was sent to the decoder.
-        if (type == 5 && sps != null && pps != null) {
+        if (type == NAL_IDR_SLICE && sps != null && pps != null) {
             buffer = socket.requestBuffer();
             socket.markNextPacket();
             socket.updateTimestamp(ts);
@@ -196,8 +266,22 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
 
         //Log.d(TAG,"- Nal unit length: " + naluLength + " delay: "+delay/1000000+" type: "+type);
 
-        // Small NAL unit => Single NAL unit
         if (naluLength <= MAXPACKETSIZE - RTPHL - 2) {
+            // Small NAL unit => Single NAL unit
+
+            //   0               1               2               3
+            //   0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+            //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //  |F|NRI|  type   |                                               |
+            //  +-+-+-+-+-+-+-+-+                                               |
+            //  |                                                               |
+            //  |               Bytes 2..n of a Single NAL unit                 |
+            //  |                                                               |
+            //  |                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //  |                               :...OPTIONAL RTP padding        |
+            //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //         RTP payload format for single NAL unit packet
+
             buffer = socket.requestBuffer();
             buffer[RTPHL] = header[4];
             len = fill(buffer, RTPHL + 1, naluLength - 1);
@@ -205,20 +289,44 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
             socket.markNextPacket();
             super.send(naluLength + RTPHL);
             //Log.d(TAG,"----- Single NAL unit - len:"+len+" delay: "+delay);
-        }
-        // Large NAL unit => Split nal unit
-        else {
+        } else {
+            // Large NAL unit => Split nal unit
+
+            //   0               1               2               3
+            //   0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+            //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //  | FU indicator  |   FU header  |                                |
+            //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               |
+            //  |                                                               |
+            //  |                         FU payload                            |
+            //  |                                                               |
+            //  |                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //  |                               :...OPTIONAL RTP padding        |
+            //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //                  RTP payload format for FU-A
+
             // Set FU-A header
-            header[1] = (byte) (header[4] & 0x1F);  // FU header type
-            header[1] += 0x80; // Start bit
+            //  +---------------+
+            //  |0|1|2|3|4|5|6|7|
+            //  +-+-+-+-+-+-+-+-+
+            //  |S|E|R|Type(1-23)|
+            //  +---------------+
+            header[1] = (byte) (header[4] & MASK_00011111);  // FU header type
+            header[1] += NAL_SLICE_START_FLAG; // Start bit
+
             // Set FU-A indicator
-            header[0] = (byte) ((header[4] & 0x60) & 0xFF); // FU indicator NRI
-            header[0] += 28;
+            //  +---------------+
+            //  |0|1|2|3|4|5|6|7|
+            //  +-+-+-+-+-+-+-+-+
+            //  |F|NRI|Type(24-29)|
+            //  +---------------+
+            header[0] = (byte) ((header[4] & MASK_01100000) & 0xFF); // FU indicator NRI
+            header[0] += FU_A;
 
             while (sum < naluLength) {
                 buffer = socket.requestBuffer();
-                buffer[RTPHL] = header[0];
-                buffer[RTPHL + 1] = header[1];
+                buffer[RTPHL] = header[0]; // FU indicator
+                buffer[RTPHL + 1] = header[1]; // FU header
                 socket.updateTimestamp(ts);
                 if ((len = fill(buffer, RTPHL + 2,
                         Math.min(naluLength - sum, MAXPACKETSIZE - RTPHL - 2))) < 0) {
@@ -228,12 +336,12 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
                 // Last packet before next NAL
                 if (sum >= naluLength) {
                     // End bit on
-                    buffer[RTPHL + 1] += 0x40;
+                    buffer[RTPHL + 1] += NAL_SLICE_END_FLAG; // FU header
                     socket.markNextPacket();
                 }
                 super.send(len + RTPHL + 2);
                 // Switch start bit
-                header[1] = (byte) (header[1] & 0x7F);
+                header[1] = (byte) (header[1] & ~NAL_SLICE_START_FLAG);
                 //Log.d(TAG,"----- FU-A unit, sum:"+sum);
             }
         }
@@ -264,9 +372,9 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
             header[3] = header[4];
             header[4] = (byte) is.read();
 
-            type = header[4] & 0x1F;
+            type = header[4] & MASK_00011111;
 
-            if (type == 5 || type == 1) {
+            if (type == NAL_IDR_SLICE || type == NAL_SLICE) {
                 naluLength = (header[0] & 0xFF) << 24
                         | (header[1] & 0xFF) << 16
                         | (header[2] & 0xFF) << 8
@@ -275,8 +383,7 @@ public class H264Packetizer extends AbstractPacketizer implements Runnable {
                     oldtime = System.nanoTime();
                     Log.e(TAG, "A NAL unit may have been found in the bit stream !");
                     break;
-                }
-                if (naluLength == 0) {
+                } else if (naluLength == 0) {
                     Log.e(TAG, "NAL unit with NULL size found...");
                 } else if (header[0] == 0xFF
                         && header[1] == 0xFF

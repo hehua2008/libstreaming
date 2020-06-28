@@ -87,6 +87,19 @@ public class RtpSocket implements Runnable {
 
         resetFifo();
 
+        //   0               1               2               3
+        //   0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |V=2|P|X|  CC   |M|     PT      |       sequence number         |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |                           timestamp                           |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        //  |           synchronization source (SSRC) identifier            |
+        //  +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        //  |            contributing source (CSRC) identifiers             |
+        //  |                             ....                              |
+        //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
         for (int i = 0; i < mBufferCount; i++) {
             mBuffers[i] = new byte[MTU];
             mPackets[i] = new DatagramPacket(mBuffers[i], 1);
