@@ -1,0 +1,3 @@
+<resources>
+    <string name="user_cancelled">User denied screen sharing permission</string>
+</resources>

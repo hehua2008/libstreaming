@@ -3,4 +3,18 @@
     android:versionCode="40"
     android:versionName="4.0">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <application>
+        <activity
+            android:name=".RequestPermissionActivity"
+            android:theme="@android:style/Theme.Material.Light">
+        </activity>
+        <service android:name=".rtsp.RtspServer">
+        </service>
+    </application>
+
 </manifest>

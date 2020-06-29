@@ -43,6 +43,7 @@ public class CodecManager {
      * MediaCodecInfo class, so we need to maintain a list of known software encoders.
      */
     public static final String[] SOFTWARE_ENCODERS = {
+            "OMX.qcom.video.encoder.avc",
             "OMX.google.h264.encoder"
     };
 

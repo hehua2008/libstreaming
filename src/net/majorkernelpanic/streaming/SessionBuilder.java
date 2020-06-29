@@ -27,8 +27,10 @@ import net.majorkernelpanic.streaming.audio.AMRNBStream;
 import net.majorkernelpanic.streaming.audio.AudioQuality;
 import net.majorkernelpanic.streaming.audio.AudioStream;
 import net.majorkernelpanic.streaming.gl.SurfaceView;
+import net.majorkernelpanic.streaming.video.BaseVideoStream;
 import net.majorkernelpanic.streaming.video.H263Stream;
 import net.majorkernelpanic.streaming.video.H264Stream;
+import net.majorkernelpanic.streaming.video.ScreenStream;
 import net.majorkernelpanic.streaming.video.VideoQuality;
 import net.majorkernelpanic.streaming.video.VideoStream;
 
@@ -46,6 +48,9 @@ public class SessionBuilder {
 
     /** Can be used with {@link #setVideoEncoder}. */
     public static final int VIDEO_H263 = 2;
+
+    /** Can be used with {@link #setVideoEncoder}. */
+    public static final int VIDEO_SCREEN = 3;
 
     /** Can be used with {@link #setAudioEncoder}. */
     public static final int AUDIO_NONE = 0;
@@ -132,15 +137,25 @@ public class SessionBuilder {
                 }
                 session.addVideoTrack(stream);
                 break;
+            case VIDEO_SCREEN:
+                ScreenStream screenStream = new ScreenStream(mContext);
+                if (mContext != null) {
+                    screenStream.setPreferences(
+                            PreferenceManager.getDefaultSharedPreferences(mContext));
+                }
+                session.addVideoTrack(screenStream);
         }
 
         if (session.getVideoTrack() != null) {
-            VideoStream video = session.getVideoTrack();
-            video.setFlashState(mFlash);
+            BaseVideoStream video = session.getVideoTrack();
             video.setVideoQuality(mVideoQuality);
-            video.setSurfaceView(mSurfaceView);
-            video.setPreviewOrientation(mOrientation);
             video.setDestinationPorts(5006);
+            if (video instanceof VideoStream) {
+                VideoStream cameraVideo = (VideoStream) video;
+                cameraVideo.setFlashState(mFlash);
+                cameraVideo.setSurfaceView(mSurfaceView);
+                cameraVideo.setPreviewOrientation(mOrientation);
+            }
         }
 
         if (session.getAudioTrack() != null) {

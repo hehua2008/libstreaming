@@ -55,7 +55,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Don't use this class directly.
  */
-public abstract class VideoStream extends MediaStream {
+public abstract class VideoStream extends BaseVideoStream {
     protected static final String TAG = VideoStream.class.getSimpleName();
 
     protected VideoQuality mRequestedQuality = VideoQuality.DEFAULT_VIDEO_QUALITY.clone();
@@ -253,6 +253,7 @@ public abstract class VideoStream extends MediaStream {
      *
      * @param videoQuality Quality of the stream
      */
+    @Override
     public void setVideoQuality(VideoQuality videoQuality) {
         if (!mRequestedQuality.equals(videoQuality)) {
             mRequestedQuality = videoQuality.clone();

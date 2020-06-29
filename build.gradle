@@ -54,6 +54,10 @@ repositories {
     jcenter()
 }
 
+dependencies {
+    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.0.0'
+}
+
 group = 'net.majorkernelpanic'
 version = '3.0'
 description = 'libstreaming'
