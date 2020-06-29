@@ -477,7 +477,6 @@ public class RtspServer extends Service {
                 /* ********************************* Method OPTIONS ********************************* */
                 /* ********************************************************************************** */
                 else if (request.method.equalsIgnoreCase("OPTIONS")) {
-                    response.status = Response.STATUS_OK;
                     response.attributes = "Public: DESCRIBE,SETUP,TEARDOWN,PLAY,PAUSE\r\n";
                     response.status = Response.STATUS_OK;
                 }
@@ -547,7 +546,6 @@ public class RtspServer extends Service {
                             + ";mode=play\r\n"
                             + "Session: " + "1185d20035702ca" + "\r\n"
                             + "Cache-Control: no-cache\r\n";
-                    response.status = Response.STATUS_OK;
 
                     // If no exception has been thrown, we reply with OK
                     response.status = Response.STATUS_OK;
@@ -628,10 +626,10 @@ public class RtspServer extends Service {
 
     static class Request {
         // Parse method & uri
-        public static final Pattern REGEX_METHOD = Pattern.compile("(\\w+) (\\S+) RTSP",
+        public static final Pattern REGEX_METHOD = Pattern.compile("(\\w+)\\s+(\\S+)\\s+RTSP",
                 Pattern.CASE_INSENSITIVE);
         // Parse a request header
-        public static final Pattern REGEX_HEADER = Pattern.compile("(\\S+):(.+)",
+        public static final Pattern REGEX_HEADER = Pattern.compile("(\\S+)\\s*:\\s*(.+)",
                 Pattern.CASE_INSENSITIVE);
 
         public String method;
@@ -643,19 +641,20 @@ public class RtspServer extends Service {
         public static Request parseRequest(BufferedReader input)
                 throws IOException, IllegalStateException, SocketException {
             Request request = new Request();
-            String line;
             Matcher matcher;
 
             // Parsing request method & uri
-            if ((line = input.readLine()) == null) {
+            String requestLine = input.readLine();
+            if (requestLine == null) {
                 throw new SocketException("Client disconnected");
             }
-            matcher = REGEX_METHOD.matcher(line);
+            matcher = REGEX_METHOD.matcher(requestLine);
             matcher.find();
             request.method = matcher.group(1);
             request.uri = matcher.group(2);
 
             // Parsing headers of the request
+            String line;
             while ((line = input.readLine()) != null && line.length() > 3) {
                 matcher = REGEX_HEADER.matcher(line);
                 matcher.find();
@@ -667,7 +666,13 @@ public class RtspServer extends Service {
 
             // It's not an error, it's just easier to follow what's happening in logcat with the
             // request in red
-            Log.e(TAG, request.method + " " + request.uri);
+            StringBuilder sb = new StringBuilder(requestLine);
+            if (!request.headers.isEmpty()) {
+                for (Map.Entry<String, String> entry : request.headers.entrySet()) {
+                    sb.append("\r\n").append(entry.getKey()).append(": ").append(entry.getValue());
+                }
+            }
+            Log.e(TAG, sb.toString());
 
             return request;
         }
@@ -699,10 +704,12 @@ public class RtspServer extends Service {
         public void send(OutputStream output) throws IOException {
             int seqid = -1;
 
-            try {
-                seqid = Integer.parseInt(mRequest.headers.get("cseq").replace(" ", ""));
-            } catch (Exception e) {
-                Log.e(TAG, "Error parsing CSeq", e);
+            if (mRequest != null) {
+                try {
+                    seqid = Integer.parseInt(mRequest.headers.get("cseq").trim());
+                } catch (Exception e) {
+                    Log.e(TAG, "Error parsing CSeq", e);
+                }
             }
 
             String response = "RTSP/1.0 " + status + "\r\n"

@@ -590,10 +590,10 @@ public class RtspClient {
 
     static class Response {
         // Parses method & uri
-        public static final Pattern REGEX_STATUS = Pattern.compile("RTSP/\\d.\\d (\\d+) (\\w+)",
+        public static final Pattern REGEX_STATUS = Pattern.compile("RTSP/\\S+\\s+(\\d+)\\s+(\\w+)",
                 Pattern.CASE_INSENSITIVE);
         // Parses a request header
-        public static final Pattern REGEX_HEADER = Pattern.compile("(\\S+):(.+)",
+        public static final Pattern REGEX_HEADER = Pattern.compile("(\\S+)\\s*:\\s*(.+)",
                 Pattern.CASE_INSENSITIVE);
         // Parses a WWW-Authenticate header
         public static final Pattern REGEX_AUTHENTICATE = Pattern.compile(
