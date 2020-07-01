@@ -27,7 +27,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.InetAddress;
-import java.net.MulticastSocket;
+import java.net.DatagramSocket;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
@@ -49,7 +49,7 @@ public class RtpSocket implements Runnable {
     public static final int RTP_HEADER_LENGTH = 12;
     public static final int MTU = 1300;
 
-    private final MulticastSocket mSocket;
+    private final DatagramSocket mSocket;
     private final DatagramPacket[] mPackets;
     private final int mBufferCount;
     private final byte[][] mBuffers;
@@ -122,7 +122,7 @@ public class RtpSocket implements Runnable {
         }
 
         try {
-            mSocket = new MulticastSocket();
+            mSocket = new DatagramSocket();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -170,7 +170,7 @@ public class RtpSocket implements Runnable {
 
     /** Sets the Time To Live of the UDP packets. */
     public void setTimeToLive(int ttl) throws IOException {
-        mSocket.setTimeToLive(ttl);
+        //mSocket.setTimeToLive(ttl);
     }
 
     /** Sets the destination address and to which the packets will be sent. */
